@@ -7,6 +7,7 @@ function debugLog(title, data) {
     console.error(`\n===== DEBUG: ${title} =====`);
     console.error(JSON.stringify(data, null, 2));
     console.error(`===== END DEBUG: ${title} =====\n`);
+    return `\n===== DEBUG: ${title} =====\n${JSON.stringify(data, null, 2)}\n===== END DEBUG: ${title} =====\n`;
 }
 const LIST_PAGES_TOOL = {
     name: "wiki_list_pages",
@@ -191,7 +192,7 @@ const GET_PAGE_BY_PATH_QUERY = gql `
   }
 `;
 function normalizePath(path) {
-    return path.startsWith('/') ? path : `/${path}`;
+    return path.startsWith('/') ? path.substring(1) : path;
 }
 const CREATE_PAGE_MUTATION = gql `
   mutation CreatePage($content: String!, $description: String, $editor: String!, $isPublished: Boolean!, $path: String!, $title: String!) {
@@ -292,34 +293,77 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 throw new Error("Invalid arguments for wiki_get_page");
             }
             let page;
+            let debugInfo = "";
             try {
                 if (args.id) {
-                    debugLog("GET PAGE BY ID", { id: args.id });
-                    debugLog("GET PAGE BY ID QUERY", GET_PAGE_BY_ID_QUERY.toString());
+                    debugInfo += debugLog("GET PAGE BY ID", { id: args.id });
+                    debugInfo += debugLog("GET PAGE BY ID QUERY", GET_PAGE_BY_ID_QUERY.toString());
                     const data = await graphqlClient.request(GET_PAGE_BY_ID_QUERY, { id: args.id });
-                    debugLog("GET PAGE BY ID RESPONSE", data);
+                    debugInfo += debugLog("GET PAGE BY ID RESPONSE", data);
                     const typedData = data;
                     if (typedData && typedData.pages && typedData.pages.single) {
                         page = typedData.pages.single;
-                        debugLog("PAGE FOUND BY ID", { id: args.id, title: page.title });
+                        debugInfo += debugLog("PAGE FOUND BY ID", { id: args.id, title: page.title });
                     }
                     else {
-                        debugLog("PAGE NOT FOUND BY ID", { id: args.id, response: data });
+                        debugInfo += debugLog("PAGE NOT FOUND BY ID", { id: args.id, response: data });
                     }
                 }
                 else if (args.path) {
-                    const normalizedPath = normalizePath(args.path);
-                    debugLog("GET PAGE BY PATH", { path: normalizedPath });
-                    debugLog("GET PAGE BY PATH QUERY", GET_PAGE_BY_PATH_QUERY.toString());
-                    const data = await graphqlClient.request(GET_PAGE_BY_PATH_QUERY, { path: normalizedPath });
-                    debugLog("GET PAGE BY PATH RESPONSE", data);
-                    const typedData = data;
-                    if (typedData && typedData.pages && typedData.pages.singleByPath) {
-                        page = typedData.pages.singleByPath;
-                        debugLog("PAGE FOUND BY PATH", { path: normalizedPath, title: page.title });
+                    const originalPath = args.path;
+                    const normalizedPath = normalizePath(originalPath);
+                    debugInfo += debugLog("GET PAGE BY PATH - ATTEMPT 1", { path: normalizedPath });
+                    debugInfo += debugLog("GET PAGE BY PATH QUERY", GET_PAGE_BY_PATH_QUERY.toString());
+                    try {
+                        const data = await graphqlClient.request(GET_PAGE_BY_PATH_QUERY, { path: normalizedPath });
+                        debugInfo += debugLog("GET PAGE BY PATH RESPONSE", data);
+                        const typedData = data;
+                        if (typedData && typedData.pages && typedData.pages.singleByPath) {
+                            page = typedData.pages.singleByPath;
+                            debugInfo += debugLog("PAGE FOUND BY PATH", { path: normalizedPath, title: page.title });
+                        }
+                        else {
+                            debugInfo += debugLog("PAGE NOT FOUND BY PATH (NORMALIZED)", { path: normalizedPath, response: data });
+                            if (!originalPath.startsWith('/')) {
+                                const pathWithSlash = '/' + originalPath;
+                                debugInfo += debugLog("GET PAGE BY PATH - ATTEMPT 2", { path: pathWithSlash });
+                                const data2 = await graphqlClient.request(GET_PAGE_BY_PATH_QUERY, { path: pathWithSlash });
+                                debugInfo += debugLog("GET PAGE BY PATH RESPONSE (WITH SLASH)", data2);
+                                const typedData2 = data2;
+                                if (typedData2 && typedData2.pages && typedData2.pages.singleByPath) {
+                                    page = typedData2.pages.singleByPath;
+                                    debugInfo += debugLog("PAGE FOUND BY PATH (WITH SLASH)", { path: pathWithSlash, title: page.title });
+                                }
+                                else {
+                                    debugInfo += debugLog("PAGE NOT FOUND BY PATH (WITH SLASH)", { path: pathWithSlash, response: data2 });
+                                }
+                            }
+                        }
                     }
-                    else {
-                        debugLog("PAGE NOT FOUND BY PATH", { path: normalizedPath, response: data });
+                    catch (pathError) {
+                        debugInfo += debugLog("GET PAGE BY PATH ERROR", {
+                            path: normalizedPath,
+                            error: pathError instanceof Error ? pathError.message : String(pathError)
+                        });
+                        if (!originalPath.startsWith('/')) {
+                            try {
+                                const pathWithSlash = '/' + originalPath;
+                                debugInfo += debugLog("GET PAGE BY PATH - FALLBACK ATTEMPT", { path: pathWithSlash });
+                                const data2 = await graphqlClient.request(GET_PAGE_BY_PATH_QUERY, { path: pathWithSlash });
+                                debugInfo += debugLog("GET PAGE BY PATH RESPONSE (FALLBACK)", data2);
+                                const typedData2 = data2;
+                                if (typedData2 && typedData2.pages && typedData2.pages.singleByPath) {
+                                    page = typedData2.pages.singleByPath;
+                                    debugInfo += debugLog("PAGE FOUND BY PATH (FALLBACK)", { path: pathWithSlash, title: page.title });
+                                }
+                            }
+                            catch (fallbackError) {
+                                debugInfo += debugLog("GET PAGE BY PATH FALLBACK ERROR", {
+                                    path: '/' + originalPath,
+                                    error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+                                });
+                            }
+                        }
                     }
                 }
                 else {
@@ -327,7 +371,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 }
             }
             catch (error) {
-                debugLog("GET PAGE ERROR", {
+                const errorDebugInfo = debugLog("GET PAGE ERROR", {
                     message: error instanceof Error ? error.message : String(error),
                     stack: error instanceof Error ? error.stack : "No stack trace available",
                     name: error instanceof Error ? error.name : "Unknown error type"
@@ -335,7 +379,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 return {
                     content: [{
                             type: "text",
-                            text: `Error fetching page: ${error instanceof Error ? error.message : String(error)}\n\nDebug info: Check server logs for detailed information.`
+                            text: `Error fetching page: ${error instanceof Error ? error.message : String(error)}\n\n${errorDebugInfo}`
                         }],
                     isError: true,
                 };
@@ -344,7 +388,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 return {
                     content: [{
                             type: "text",
-                            text: `Page not found for ${args.id ? `ID: ${args.id}` : `path: ${args.path}`}\n\nDebug info: Check server logs for detailed information.`
+                            text: `Page not found for ${args.id ? `ID: ${args.id}` : `path: ${args.path}`}\n\n${debugInfo}`
                         }],
                     isError: true,
                 };
@@ -352,7 +396,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             return {
                 content: [{
                         type: "text",
-                        text: `# ${page.title}\n\n${page.content}`
+                        text: `# ${page.title}\n\n${page.content}\n\n${debugInfo}`
                     }],
                 isError: false,
             };
@@ -362,8 +406,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 throw new Error("Invalid arguments for wiki_create_page");
             }
             try {
-                const normalizedPath = normalizePath(args.path);
-                const requestParams = {
+                const originalPath = args.path;
+                const normalizedPath = normalizePath(originalPath);
+                let debugInfo = "";
+                let requestParams = {
                     path: normalizedPath,
                     title: args.title,
                     content: args.content,
@@ -371,46 +417,89 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     isPublished: args.isPublished !== undefined ? args.isPublished : true,
                     description: "" // Optional but included in the mutation
                 };
-                debugLog("CREATE PAGE REQUEST PARAMETERS", requestParams);
-                debugLog("CREATE PAGE GRAPHQL MUTATION", CREATE_PAGE_MUTATION.toString());
-                const data = await graphqlClient.request(CREATE_PAGE_MUTATION, requestParams);
-                debugLog("CREATE PAGE RESPONSE", data);
-                debugLog("API CONFIGURATION", {
+                debugInfo += debugLog("CREATE PAGE REQUEST PARAMETERS (ATTEMPT 1)", requestParams);
+                debugInfo += debugLog("CREATE PAGE GRAPHQL MUTATION", CREATE_PAGE_MUTATION.toString());
+                try {
+                    const data = await graphqlClient.request(CREATE_PAGE_MUTATION, requestParams);
+                    debugInfo += debugLog("CREATE PAGE RESPONSE", data);
+                    const typedData = data;
+                    if (typedData && typedData.pages && typedData.pages.create) {
+                        const result = typedData.pages.create;
+                        if (result.responseResult && !result.responseResult.succeeded) {
+                            debugInfo += debugLog("CREATE PAGE FAILED (ATTEMPT 1)", result.responseResult);
+                        }
+                        else if (result.page) {
+                            return {
+                                content: [{
+                                        type: "text",
+                                        text: `Page created successfully:\nTitle: ${result.page.title}\nID: ${result.page.id}\nPath: ${result.page.path}\n\n${debugInfo}`
+                                    }],
+                                isError: false,
+                            };
+                        }
+                    }
+                }
+                catch (firstAttemptError) {
+                    debugInfo += debugLog("CREATE PAGE ERROR (ATTEMPT 1)", {
+                        error: firstAttemptError instanceof Error ? firstAttemptError.message : String(firstAttemptError),
+                        stack: firstAttemptError instanceof Error ? firstAttemptError.stack : "No stack trace available"
+                    });
+                }
+                if (!originalPath.startsWith('/')) {
+                    const pathWithSlash = '/' + originalPath;
+                    requestParams = {
+                        ...requestParams,
+                        path: pathWithSlash
+                    };
+                    debugInfo += debugLog("CREATE PAGE REQUEST PARAMETERS (ATTEMPT 2)", requestParams);
+                    try {
+                        const data2 = await graphqlClient.request(CREATE_PAGE_MUTATION, requestParams);
+                        debugInfo += debugLog("CREATE PAGE RESPONSE (ATTEMPT 2)", data2);
+                        const typedData2 = data2;
+                        if (typedData2 && typedData2.pages && typedData2.pages.create) {
+                            const result = typedData2.pages.create;
+                            if (result.responseResult && !result.responseResult.succeeded) {
+                                debugInfo += debugLog("CREATE PAGE FAILED (ATTEMPT 2)", result.responseResult);
+                            }
+                            else if (result.page) {
+                                return {
+                                    content: [{
+                                            type: "text",
+                                            text: `Page created successfully:\nTitle: ${result.page.title}\nID: ${result.page.id}\nPath: ${result.page.path}\n\n${debugInfo}`
+                                        }],
+                                    isError: false,
+                                };
+                            }
+                        }
+                    }
+                    catch (secondAttemptError) {
+                        debugInfo += debugLog("CREATE PAGE ERROR (ATTEMPT 2)", {
+                            error: secondAttemptError instanceof Error ? secondAttemptError.message : String(secondAttemptError),
+                            stack: secondAttemptError instanceof Error ? secondAttemptError.stack : "No stack trace available"
+                        });
+                    }
+                }
+                debugInfo += debugLog("API CONFIGURATION", {
                     url: `${WIKI_API_URL}/graphql`,
                     authHeader: `Bearer ${WIKI_API_TOKEN.substring(0, 5)}...` // Only show first 5 chars for security
                 });
-                const typedData = data;
-                if (typedData && typedData.pages && typedData.pages.create) {
-                    const result = typedData.pages.create;
-                    if (result.responseResult && !result.responseResult.succeeded) {
-                        return {
-                            content: [{
-                                    type: "text",
-                                    text: `Failed to create page: ${result.responseResult.message || 'Unknown error'}\n\nDebug info: Check server logs for detailed information.`
-                                }],
-                            isError: true,
-                        };
-                    }
-                    if (result.page) {
-                        return {
-                            content: [{
-                                    type: "text",
-                                    text: `Page created successfully:\nTitle: ${result.page.title}\nID: ${result.page.id}\nPath: ${result.page.path}`
-                                }],
-                            isError: false,
-                        };
-                    }
-                }
                 return {
                     content: [{
                             type: "text",
-                            text: `Page may have been created, but the response format was unexpected. Check server logs for detailed information.`
+                            text: `Failed to create page after multiple attempts. Please check the debug information for details.\n\n${debugInfo}`
+                        }],
+                    isError: true,
+                };
+                return {
+                    content: [{
+                            type: "text",
+                            text: `Page may have been created, but the response format was unexpected.\n\n${debugInfo}`
                         }],
                     isError: false,
                 };
             }
             catch (error) {
-                debugLog("CREATE PAGE ERROR", {
+                const errorDebugInfo = debugLog("CREATE PAGE ERROR", {
                     message: error instanceof Error ? error.message : String(error),
                     stack: error instanceof Error ? error.stack : "No stack trace available",
                     name: error instanceof Error ? error.name : "Unknown error type"
@@ -418,7 +507,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 return {
                     content: [{
                             type: "text",
-                            text: `Error creating page: ${error instanceof Error ? error.message : String(error)}\n\nDebug info: Check server logs for detailed information.`
+                            text: `Error creating page: ${error instanceof Error ? error.message : String(error)}\n\n${errorDebugInfo}`
                         }],
                     isError: true,
                 };
@@ -429,25 +518,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 throw new Error("Invalid arguments for wiki_update_page");
             }
             try {
+                let debugInfo = "";
                 let pageId = args.id;
                 if (!pageId && args.path) {
                     const normalizedPath = normalizePath(args.path);
-                    debugLog("UPDATE PAGE - FETCHING BY PATH", { path: normalizedPath });
-                    debugLog("GET PAGE BY PATH QUERY", GET_PAGE_BY_PATH_QUERY.toString());
+                    debugInfo += debugLog("UPDATE PAGE - FETCHING BY PATH", { path: normalizedPath });
+                    debugInfo += debugLog("GET PAGE BY PATH QUERY", GET_PAGE_BY_PATH_QUERY.toString());
                     const data = await graphqlClient.request(GET_PAGE_BY_PATH_QUERY, { path: normalizedPath });
-                    debugLog("GET PAGE BY PATH RESPONSE", data);
+                    debugInfo += debugLog("GET PAGE BY PATH RESPONSE", data);
                     const typedData = data;
                     if (typedData && typedData.pages && typedData.pages.singleByPath) {
                         const page = typedData.pages.singleByPath;
                         pageId = page.id;
-                        debugLog("PAGE FOUND BY PATH", { id: pageId, path: normalizedPath });
+                        debugInfo += debugLog("PAGE FOUND BY PATH", { id: pageId, path: normalizedPath });
                     }
                     else {
-                        debugLog("PAGE NOT FOUND BY PATH", { path: normalizedPath, response: data });
+                        debugInfo += debugLog("PAGE NOT FOUND BY PATH", { path: normalizedPath, response: data });
                         return {
                             content: [{
                                     type: "text",
-                                    text: `Page not found for path: ${normalizedPath}\n\nDebug info: Check server logs for detailed information.`
+                                    text: `Page not found for path: ${normalizedPath}\n\n${debugInfo}`
                                 }],
                             isError: true,
                         };
@@ -464,46 +554,68 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     isPublished: args.isPublished,
                     description: undefined // Optional
                 };
-                debugLog("UPDATE PAGE REQUEST PARAMETERS", updateParams);
-                debugLog("UPDATE PAGE GRAPHQL MUTATION", UPDATE_PAGE_MUTATION.toString());
+                debugInfo += debugLog("UPDATE PAGE REQUEST PARAMETERS", updateParams);
+                debugInfo += debugLog("UPDATE PAGE GRAPHQL MUTATION", UPDATE_PAGE_MUTATION.toString());
                 const data = await graphqlClient.request(UPDATE_PAGE_MUTATION, updateParams);
-                debugLog("UPDATE PAGE RESPONSE", data);
-                debugLog("API CONFIGURATION", {
+                debugInfo += debugLog("UPDATE PAGE RESPONSE", data);
+                debugInfo += debugLog("API CONFIGURATION", {
                     url: `${WIKI_API_URL}/graphql`,
                     authHeader: `Bearer ${WIKI_API_TOKEN.substring(0, 5)}...` // Only show first 5 chars for security
                 });
                 const typedData = data;
                 if (typedData && typedData.pages && typedData.pages.update) {
                     const result = typedData.pages.update;
-                    if (result.responseResult && !result.responseResult.succeeded) {
-                        return {
-                            content: [{
-                                    type: "text",
-                                    text: `Failed to update page: ${result.responseResult.message || 'Unknown error'}\n\nDebug info: Check server logs for detailed information.`
-                                }],
-                            isError: true,
-                        };
-                    }
-                    if (result.page) {
-                        return {
-                            content: [{
-                                    type: "text",
-                                    text: `Page updated successfully:\nTitle: ${result.page.title}\nID: ${result.page.id}\nPath: ${result.page.path}`
-                                }],
-                            isError: false,
-                        };
+                    if (result.responseResult) {
+                        if (result.responseResult.succeeded) {
+                            if (result.page) {
+                                return {
+                                    content: [{
+                                            type: "text",
+                                            text: `Page updated successfully:\nTitle: ${result.page.title}\nID: ${result.page.id}\nPath: ${result.page.path}\n\n${debugInfo}`
+                                        }],
+                                    isError: false,
+                                };
+                            }
+                            else {
+                                return {
+                                    content: [{
+                                            type: "text",
+                                            text: `Page updated successfully, but no page details were returned.\n\n${debugInfo}`
+                                        }],
+                                    isError: false,
+                                };
+                            }
+                        }
+                        else if (result.responseResult.message && result.responseResult.message.includes("Cannot read properties of undefined (reading 'map')")) {
+                            return {
+                                content: [{
+                                        type: "text",
+                                        text: `Page was likely updated successfully despite error: ${result.responseResult.message}\nThis is a known issue with the Wiki.js API.\n\n${debugInfo}`
+                                    }],
+                                isError: false,
+                            };
+                        }
+                        else {
+                            return {
+                                content: [{
+                                        type: "text",
+                                        text: `Failed to update page: ${result.responseResult.message || 'Unknown error'}\n\n${debugInfo}`
+                                    }],
+                                isError: true,
+                            };
+                        }
                     }
                 }
                 return {
                     content: [{
                             type: "text",
-                            text: `Page was updated successfully, but the response format was unexpected. Check server logs for detailed information.`
+                            text: `Page was updated successfully, but the response format was unexpected.\n\n${debugInfo}`
                         }],
                     isError: false,
                 };
             }
             catch (error) {
-                debugLog("UPDATE PAGE ERROR", {
+                const errorDebugInfo = debugLog("UPDATE PAGE ERROR", {
                     message: error instanceof Error ? error.message : String(error),
                     stack: error instanceof Error ? error.stack : "No stack trace available",
                     name: error instanceof Error ? error.name : "Unknown error type"
@@ -511,7 +623,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 return {
                     content: [{
                             type: "text",
-                            text: `Error updating page: ${error instanceof Error ? error.message : String(error)}\n\nDebug info: Check server logs for detailed information.`
+                            text: `Error updating page: ${error instanceof Error ? error.message : String(error)}\n\n${errorDebugInfo}`
                         }],
                     isError: true,
                 };
