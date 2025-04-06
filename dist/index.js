@@ -495,23 +495,47 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 let debugInfo = "";
                 let pageId = args.id;
                 if (!pageId && args.path) {
-                    const normalizedPath = normalizePath(args.path);
-                    debugInfo += debugLog("UPDATE PAGE - FETCHING BY PATH", { path: normalizedPath });
+                    const originalPath = args.path;
+                    const pathVariations = generatePathVariations(originalPath);
+                    debugInfo += debugLog("UPDATE PAGE - PATH VARIATIONS", { variations: pathVariations });
                     debugInfo += debugLog("GET PAGE BY PATH QUERY", GET_PAGE_BY_PATH_QUERY.toString());
-                    const data = await graphqlClient.request(GET_PAGE_BY_PATH_QUERY, { path: normalizedPath });
-                    debugInfo += debugLog("GET PAGE BY PATH RESPONSE", data);
-                    const typedData = data;
-                    if (typedData && typedData.pages && typedData.pages.singleByPath) {
-                        const page = typedData.pages.singleByPath;
-                        pageId = page.id;
-                        debugInfo += debugLog("PAGE FOUND BY PATH", { id: pageId, path: normalizedPath });
+                    let page = null;
+                    for (let i = 0; i < pathVariations.length; i++) {
+                        const currentPath = pathVariations[i];
+                        debugInfo += debugLog(`UPDATE PAGE - FETCHING BY PATH - ATTEMPT ${i + 1}`, { path: currentPath });
+                        try {
+                            const data = await graphqlClient.request(GET_PAGE_BY_PATH_QUERY, { path: currentPath });
+                            debugInfo += debugLog(`GET PAGE BY PATH RESPONSE - ATTEMPT ${i + 1}`, data);
+                            const typedData = data;
+                            if (typedData && typedData.pages && typedData.pages.singleByPath) {
+                                page = typedData.pages.singleByPath;
+                                pageId = page.id;
+                                debugInfo += debugLog("PAGE FOUND BY PATH", { id: pageId, path: currentPath });
+                                break; // Found the page, exit the loop
+                            }
+                            else {
+                                debugInfo += debugLog(`PAGE NOT FOUND BY PATH - ATTEMPT ${i + 1}`, {
+                                    path: currentPath,
+                                    response: data
+                                });
+                            }
+                        }
+                        catch (pathError) {
+                            debugInfo += debugLog(`GET PAGE BY PATH ERROR - ATTEMPT ${i + 1}`, {
+                                path: currentPath,
+                                error: pathError instanceof Error ? pathError.message : String(pathError)
+                            });
+                        }
                     }
-                    else {
-                        debugInfo += debugLog("PAGE NOT FOUND BY PATH", { path: normalizedPath, response: data });
+                    if (!page) {
+                        debugInfo += debugLog("UPDATE PAGE - ALL PATH ATTEMPTS FAILED", {
+                            originalPath,
+                            triedVariations: pathVariations
+                        });
                         return {
                             content: [{
                                     type: "text",
-                                    text: `Page not found for path: ${normalizedPath}\n\n${debugInfo}`
+                                    text: `Page not found for path: ${originalPath}\n\n${debugInfo}`
                                 }],
                             isError: true,
                         };
