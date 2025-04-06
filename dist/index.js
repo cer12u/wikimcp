@@ -200,15 +200,24 @@ function normalizePath(path) {
 function generatePathVariations(path) {
     const originalPath = path;
     const normalizedPath = normalizePath(originalPath);
-    const variations = [normalizedPath];
-    if (!originalPath.startsWith('/')) {
+    const hasLangPrefix = normalizedPath.match(/^[a-z]{2}\//i);
+    const variations = [];
+    if (!hasLangPrefix) {
+        variations.push('ja/' + normalizedPath);
+        variations.push('/ja/' + normalizedPath);
+    }
+    else {
+        variations.push(normalizedPath);
+    }
+    if (!variations.includes(normalizedPath)) {
+        variations.push(normalizedPath);
+    }
+    if (!originalPath.startsWith('/') && !variations.includes('/' + originalPath)) {
         variations.push('/' + originalPath);
     }
-    if (!normalizedPath.match(/^[a-z]{2}\//i)) {
+    if (!hasLangPrefix) {
         variations.push('en/' + normalizedPath);
-        variations.push('ja/' + normalizedPath);
         variations.push('/en/' + normalizedPath);
-        variations.push('/ja/' + normalizedPath);
     }
     return variations;
 }
