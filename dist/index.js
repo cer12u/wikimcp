@@ -185,6 +185,9 @@ const GET_PAGE_BY_PATH_QUERY = gql `
     }
   }
 `;
+function normalizePath(path) {
+    return path.startsWith('/') ? path : `/${path}`;
+}
 const CREATE_PAGE_MUTATION = gql `
   mutation CreatePage($content: String!, $description: String, $editor: String!, $isPublished: Boolean!, $path: String!, $title: String!) {
     pages {
@@ -284,18 +287,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 throw new Error("Invalid arguments for wiki_get_page");
             }
             let page;
-            if (args.id) {
-                const data = await graphqlClient.request(GET_PAGE_BY_ID_QUERY, { id: args.id });
-                const typedData = data;
-                page = typedData.pages.single;
+            try {
+                if (args.id) {
+                    const data = await graphqlClient.request(GET_PAGE_BY_ID_QUERY, { id: args.id });
+                    const typedData = data;
+                    page = typedData.pages.single;
+                }
+                else if (args.path) {
+                    const normalizedPath = normalizePath(args.path);
+                    console.error(`Fetching page by path: ${normalizedPath}`);
+                    const data = await graphqlClient.request(GET_PAGE_BY_PATH_QUERY, { path: normalizedPath });
+                    console.error("Get page by path response:", JSON.stringify(data, null, 2));
+                    const typedData = data;
+                    page = typedData.pages.singleByPath;
+                }
+                else {
+                    throw new Error("Either id or path must be provided");
+                }
             }
-            else if (args.path) {
-                const data = await graphqlClient.request(GET_PAGE_BY_PATH_QUERY, { path: args.path });
-                const typedData = data;
-                page = typedData.pages.singleByPath;
-            }
-            else {
-                throw new Error("Either id or path must be provided");
+            catch (error) {
+                console.error("Error fetching page:", error);
+                return {
+                    content: [{
+                            type: "text",
+                            text: `Error fetching page: ${error instanceof Error ? error.message : String(error)}`
+                        }],
+                    isError: true,
+                };
             }
             if (!page) {
                 return {
@@ -319,8 +337,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 throw new Error("Invalid arguments for wiki_create_page");
             }
             try {
+                const normalizedPath = normalizePath(args.path);
+                console.error(`Creating page with path: ${normalizedPath}`);
                 const data = await graphqlClient.request(CREATE_PAGE_MUTATION, {
-                    path: args.path,
+                    path: normalizedPath,
                     title: args.title,
                     content: args.content,
                     editor: args.editor || "markdown",
@@ -329,20 +349,31 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 });
                 console.error("Create page response:", JSON.stringify(data, null, 2));
                 const typedData = data;
-                const result = typedData.pages.create;
-                if (!result.responseResult.succeeded) {
-                    return {
-                        content: [{
-                                type: "text",
-                                text: `Failed to create page: ${result.responseResult.message}`
-                            }],
-                        isError: true,
-                    };
+                if (typedData && typedData.pages && typedData.pages.create) {
+                    const result = typedData.pages.create;
+                    if (result.responseResult && !result.responseResult.succeeded) {
+                        return {
+                            content: [{
+                                    type: "text",
+                                    text: `Failed to create page: ${result.responseResult.message || 'Unknown error'}`
+                                }],
+                            isError: true,
+                        };
+                    }
+                    if (result.page) {
+                        return {
+                            content: [{
+                                    type: "text",
+                                    text: `Page created successfully:\nTitle: ${result.page.title}\nID: ${result.page.id}\nPath: ${result.page.path}`
+                                }],
+                            isError: false,
+                        };
+                    }
                 }
                 return {
                     content: [{
                             type: "text",
-                            text: `Page created successfully:\nTitle: ${result.page.title}\nID: ${result.page.id}\nPath: ${result.page.path}`
+                            text: `Page may have been created, but the response format was unexpected: ${JSON.stringify(data)}`
                         }],
                     isError: false,
                 };
@@ -362,26 +393,32 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             if (!isUpdatePageArgs(args)) {
                 throw new Error("Invalid arguments for wiki_update_page");
             }
-            let pageId = args.id;
-            if (!pageId && args.path) {
-                const data = await graphqlClient.request(GET_PAGE_BY_PATH_QUERY, { path: args.path });
-                const typedData = data;
-                const page = typedData.pages.singleByPath;
-                if (!page) {
-                    return {
-                        content: [{
-                                type: "text",
-                                text: `Page not found for path: ${args.path}`
-                            }],
-                        isError: true,
-                    };
-                }
-                pageId = page.id;
-            }
-            if (!pageId) {
-                throw new Error("Could not determine page ID");
-            }
             try {
+                let pageId = args.id;
+                if (!pageId && args.path) {
+                    const normalizedPath = normalizePath(args.path);
+                    console.error(`Fetching page by path for update: ${normalizedPath}`);
+                    const data = await graphqlClient.request(GET_PAGE_BY_PATH_QUERY, { path: normalizedPath });
+                    console.error("Get page by path for update response:", JSON.stringify(data, null, 2));
+                    const typedData = data;
+                    if (typedData && typedData.pages && typedData.pages.singleByPath) {
+                        const page = typedData.pages.singleByPath;
+                        pageId = page.id;
+                    }
+                    else {
+                        return {
+                            content: [{
+                                    type: "text",
+                                    text: `Page not found for path: ${normalizedPath}`
+                                }],
+                            isError: true,
+                        };
+                    }
+                }
+                if (!pageId) {
+                    throw new Error("Could not determine page ID");
+                }
+                console.error(`Updating page with ID: ${pageId}`);
                 const data = await graphqlClient.request(UPDATE_PAGE_MUTATION, {
                     id: pageId,
                     title: args.title,
@@ -392,20 +429,31 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 });
                 console.error("Update page response:", JSON.stringify(data, null, 2));
                 const typedData = data;
-                const result = typedData.pages.update;
-                if (!result.responseResult.succeeded) {
-                    return {
-                        content: [{
-                                type: "text",
-                                text: `Failed to update page: ${result.responseResult.message}`
-                            }],
-                        isError: true,
-                    };
+                if (typedData && typedData.pages && typedData.pages.update) {
+                    const result = typedData.pages.update;
+                    if (result.responseResult && !result.responseResult.succeeded) {
+                        return {
+                            content: [{
+                                    type: "text",
+                                    text: `Failed to update page: ${result.responseResult.message || 'Unknown error'}`
+                                }],
+                            isError: true,
+                        };
+                    }
+                    if (result.page) {
+                        return {
+                            content: [{
+                                    type: "text",
+                                    text: `Page updated successfully:\nTitle: ${result.page.title}\nID: ${result.page.id}\nPath: ${result.page.path}`
+                                }],
+                            isError: false,
+                        };
+                    }
                 }
                 return {
                     content: [{
                             type: "text",
-                            text: `Page updated successfully:\nTitle: ${result.page.title}\nID: ${result.page.id}\nPath: ${result.page.path}`
+                            text: `Page was updated successfully, but the response format was unexpected: ${JSON.stringify(data)}`
                         }],
                     isError: false,
                 };
