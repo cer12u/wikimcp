@@ -192,7 +192,25 @@ const GET_PAGE_BY_PATH_QUERY = gql `
   }
 `;
 function normalizePath(path) {
-    return path.startsWith('/') ? path.substring(1) : path;
+    if (path.startsWith('/')) {
+        return path.substring(1); // Remove leading slash: "/ja/home" -> "ja/home"
+    }
+    return path; // Keep as is: "ja/home" -> "ja/home"
+}
+function generatePathVariations(path) {
+    const originalPath = path;
+    const normalizedPath = normalizePath(originalPath);
+    const variations = [normalizedPath];
+    if (!originalPath.startsWith('/')) {
+        variations.push('/' + originalPath);
+    }
+    if (!normalizedPath.match(/^[a-z]{2}\//i)) {
+        variations.push('en/' + normalizedPath);
+        variations.push('ja/' + normalizedPath);
+        variations.push('/en/' + normalizedPath);
+        variations.push('/ja/' + normalizedPath);
+    }
+    return variations;
 }
 const CREATE_PAGE_MUTATION = gql `
   mutation CreatePage($content: String!, $description: String, $editor: String!, $isPublished: Boolean!, $path: String!, $title: String!) {
@@ -311,59 +329,40 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 }
                 else if (args.path) {
                     const originalPath = args.path;
-                    const normalizedPath = normalizePath(originalPath);
-                    debugInfo += debugLog("GET PAGE BY PATH - ATTEMPT 1", { path: normalizedPath });
+                    const pathVariations = generatePathVariations(originalPath);
+                    debugInfo += debugLog("GET PAGE BY PATH - PATH VARIATIONS", { variations: pathVariations });
                     debugInfo += debugLog("GET PAGE BY PATH QUERY", GET_PAGE_BY_PATH_QUERY.toString());
-                    try {
-                        const data = await graphqlClient.request(GET_PAGE_BY_PATH_QUERY, { path: normalizedPath });
-                        debugInfo += debugLog("GET PAGE BY PATH RESPONSE", data);
-                        const typedData = data;
-                        if (typedData && typedData.pages && typedData.pages.singleByPath) {
-                            page = typedData.pages.singleByPath;
-                            debugInfo += debugLog("PAGE FOUND BY PATH", { path: normalizedPath, title: page.title });
-                        }
-                        else {
-                            debugInfo += debugLog("PAGE NOT FOUND BY PATH (NORMALIZED)", { path: normalizedPath, response: data });
-                            if (!originalPath.startsWith('/')) {
-                                const pathWithSlash = '/' + originalPath;
-                                debugInfo += debugLog("GET PAGE BY PATH - ATTEMPT 2", { path: pathWithSlash });
-                                const data2 = await graphqlClient.request(GET_PAGE_BY_PATH_QUERY, { path: pathWithSlash });
-                                debugInfo += debugLog("GET PAGE BY PATH RESPONSE (WITH SLASH)", data2);
-                                const typedData2 = data2;
-                                if (typedData2 && typedData2.pages && typedData2.pages.singleByPath) {
-                                    page = typedData2.pages.singleByPath;
-                                    debugInfo += debugLog("PAGE FOUND BY PATH (WITH SLASH)", { path: pathWithSlash, title: page.title });
-                                }
-                                else {
-                                    debugInfo += debugLog("PAGE NOT FOUND BY PATH (WITH SLASH)", { path: pathWithSlash, response: data2 });
-                                }
+                    for (let i = 0; i < pathVariations.length; i++) {
+                        const currentPath = pathVariations[i];
+                        debugInfo += debugLog(`GET PAGE BY PATH - ATTEMPT ${i + 1}`, { path: currentPath });
+                        try {
+                            const data = await graphqlClient.request(GET_PAGE_BY_PATH_QUERY, { path: currentPath });
+                            debugInfo += debugLog(`GET PAGE BY PATH RESPONSE - ATTEMPT ${i + 1}`, data);
+                            const typedData = data;
+                            if (typedData && typedData.pages && typedData.pages.singleByPath) {
+                                page = typedData.pages.singleByPath;
+                                debugInfo += debugLog("PAGE FOUND BY PATH", { path: currentPath, title: page.title });
+                                break; // Found the page, exit the loop
                             }
-                        }
-                    }
-                    catch (pathError) {
-                        debugInfo += debugLog("GET PAGE BY PATH ERROR", {
-                            path: normalizedPath,
-                            error: pathError instanceof Error ? pathError.message : String(pathError)
-                        });
-                        if (!originalPath.startsWith('/')) {
-                            try {
-                                const pathWithSlash = '/' + originalPath;
-                                debugInfo += debugLog("GET PAGE BY PATH - FALLBACK ATTEMPT", { path: pathWithSlash });
-                                const data2 = await graphqlClient.request(GET_PAGE_BY_PATH_QUERY, { path: pathWithSlash });
-                                debugInfo += debugLog("GET PAGE BY PATH RESPONSE (FALLBACK)", data2);
-                                const typedData2 = data2;
-                                if (typedData2 && typedData2.pages && typedData2.pages.singleByPath) {
-                                    page = typedData2.pages.singleByPath;
-                                    debugInfo += debugLog("PAGE FOUND BY PATH (FALLBACK)", { path: pathWithSlash, title: page.title });
-                                }
-                            }
-                            catch (fallbackError) {
-                                debugInfo += debugLog("GET PAGE BY PATH FALLBACK ERROR", {
-                                    path: '/' + originalPath,
-                                    error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+                            else {
+                                debugInfo += debugLog(`PAGE NOT FOUND BY PATH - ATTEMPT ${i + 1}`, {
+                                    path: currentPath,
+                                    response: data
                                 });
                             }
                         }
+                        catch (pathError) {
+                            debugInfo += debugLog(`GET PAGE BY PATH ERROR - ATTEMPT ${i + 1}`, {
+                                path: currentPath,
+                                error: pathError instanceof Error ? pathError.message : String(pathError)
+                            });
+                        }
+                    }
+                    if (!page) {
+                        debugInfo += debugLog("GET PAGE BY PATH - ALL ATTEMPTS FAILED", {
+                            originalPath,
+                            triedVariations: pathVariations
+                        });
                     }
                 }
                 else {
@@ -407,61 +406,31 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
             try {
                 const originalPath = args.path;
-                const normalizedPath = normalizePath(originalPath);
+                const pathVariations = generatePathVariations(originalPath);
                 let debugInfo = "";
-                let requestParams = {
-                    path: normalizedPath,
+                debugInfo += debugLog("CREATE PAGE - PATH VARIATIONS", { variations: pathVariations });
+                debugInfo += debugLog("CREATE PAGE GRAPHQL MUTATION", CREATE_PAGE_MUTATION.toString());
+                const baseParams = {
                     title: args.title,
                     content: args.content,
                     editor: args.editor || "markdown",
                     isPublished: args.isPublished !== undefined ? args.isPublished : true,
                     description: "" // Optional but included in the mutation
                 };
-                debugInfo += debugLog("CREATE PAGE REQUEST PARAMETERS (ATTEMPT 1)", requestParams);
-                debugInfo += debugLog("CREATE PAGE GRAPHQL MUTATION", CREATE_PAGE_MUTATION.toString());
-                try {
-                    const data = await graphqlClient.request(CREATE_PAGE_MUTATION, requestParams);
-                    debugInfo += debugLog("CREATE PAGE RESPONSE", data);
-                    const typedData = data;
-                    if (typedData && typedData.pages && typedData.pages.create) {
-                        const result = typedData.pages.create;
-                        if (result.responseResult && !result.responseResult.succeeded) {
-                            debugInfo += debugLog("CREATE PAGE FAILED (ATTEMPT 1)", result.responseResult);
-                        }
-                        else if (result.page) {
-                            return {
-                                content: [{
-                                        type: "text",
-                                        text: `Page created successfully:\nTitle: ${result.page.title}\nID: ${result.page.id}\nPath: ${result.page.path}\n\n${debugInfo}`
-                                    }],
-                                isError: false,
-                            };
-                        }
-                    }
-                }
-                catch (firstAttemptError) {
-                    debugInfo += debugLog("CREATE PAGE ERROR (ATTEMPT 1)", {
-                        error: firstAttemptError instanceof Error ? firstAttemptError.message : String(firstAttemptError),
-                        stack: firstAttemptError instanceof Error ? firstAttemptError.stack : "No stack trace available"
-                    });
-                }
-                if (!originalPath.startsWith('/')) {
-                    const pathWithSlash = '/' + originalPath;
-                    requestParams = {
-                        ...requestParams,
-                        path: pathWithSlash
+                for (let i = 0; i < pathVariations.length; i++) {
+                    const currentPath = pathVariations[i];
+                    const requestParams = {
+                        ...baseParams,
+                        path: currentPath
                     };
-                    debugInfo += debugLog("CREATE PAGE REQUEST PARAMETERS (ATTEMPT 2)", requestParams);
+                    debugInfo += debugLog(`CREATE PAGE REQUEST PARAMETERS - ATTEMPT ${i + 1}`, requestParams);
                     try {
-                        const data2 = await graphqlClient.request(CREATE_PAGE_MUTATION, requestParams);
-                        debugInfo += debugLog("CREATE PAGE RESPONSE (ATTEMPT 2)", data2);
-                        const typedData2 = data2;
-                        if (typedData2 && typedData2.pages && typedData2.pages.create) {
-                            const result = typedData2.pages.create;
-                            if (result.responseResult && !result.responseResult.succeeded) {
-                                debugInfo += debugLog("CREATE PAGE FAILED (ATTEMPT 2)", result.responseResult);
-                            }
-                            else if (result.page) {
+                        const data = await graphqlClient.request(CREATE_PAGE_MUTATION, requestParams);
+                        debugInfo += debugLog(`CREATE PAGE RESPONSE - ATTEMPT ${i + 1}`, data);
+                        const typedData = data;
+                        if (typedData && typedData.pages && typedData.pages.create) {
+                            const result = typedData.pages.create;
+                            if (result.responseResult && result.responseResult.succeeded && result.page) {
                                 return {
                                     content: [{
                                             type: "text",
@@ -470,23 +439,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                                     isError: false,
                                 };
                             }
+                            else if (result.responseResult) {
+                                debugInfo += debugLog(`CREATE PAGE FAILED - ATTEMPT ${i + 1}`, result.responseResult);
+                            }
                         }
                     }
-                    catch (secondAttemptError) {
-                        debugInfo += debugLog("CREATE PAGE ERROR (ATTEMPT 2)", {
-                            error: secondAttemptError instanceof Error ? secondAttemptError.message : String(secondAttemptError),
-                            stack: secondAttemptError instanceof Error ? secondAttemptError.stack : "No stack trace available"
+                    catch (attemptError) {
+                        debugInfo += debugLog(`CREATE PAGE ERROR - ATTEMPT ${i + 1}`, {
+                            path: currentPath,
+                            error: attemptError instanceof Error ? attemptError.message : String(attemptError),
+                            stack: attemptError instanceof Error ? attemptError.stack : "No stack trace available"
                         });
                     }
                 }
                 debugInfo += debugLog("API CONFIGURATION", {
                     url: `${WIKI_API_URL}/graphql`,
-                    authHeader: `Bearer ${WIKI_API_TOKEN.substring(0, 5)}...` // Only show first 5 chars for security
+                    authHeader: `Bearer ${WIKI_API_TOKEN.substring(0, 5)}...`, // Only show first 5 chars for security
+                    pathVariations: pathVariations
                 });
                 return {
                     content: [{
                             type: "text",
-                            text: `Failed to create page after multiple attempts. Please check the debug information for details.\n\n${debugInfo}`
+                            text: `Failed to create page after multiple attempts. Wiki.js may require specific language prefixes in paths (e.g., "/ja/home"). Please check the debug information for details.\n\n${debugInfo}`
                         }],
                     isError: true,
                 };
