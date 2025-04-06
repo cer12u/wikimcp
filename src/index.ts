@@ -222,18 +222,29 @@ function normalizePath(path: string): string {
 function generatePathVariations(path: string): string[] {
   const originalPath = path;
   const normalizedPath = normalizePath(originalPath);
-  const variations: string[] = [normalizedPath];
   
-  if (!originalPath.startsWith('/')) {
+  const hasLangPrefix = normalizedPath.match(/^[a-z]{2}\//i);
+  
+  const variations: string[] = [];
+  
+  if (!hasLangPrefix) {
+    variations.push('ja/' + normalizedPath);
+    variations.push('/ja/' + normalizedPath);
+  } else {
+    variations.push(normalizedPath);
+  }
+  
+  if (!variations.includes(normalizedPath)) {
+    variations.push(normalizedPath);
+  }
+  
+  if (!originalPath.startsWith('/') && !variations.includes('/' + originalPath)) {
     variations.push('/' + originalPath);
   }
   
-  if (!normalizedPath.match(/^[a-z]{2}\//i)) {
+  if (!hasLangPrefix) {
     variations.push('en/' + normalizedPath);
-    variations.push('ja/' + normalizedPath);
-    
     variations.push('/en/' + normalizedPath);
-    variations.push('/ja/' + normalizedPath);
   }
   
   return variations;
@@ -532,6 +543,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               error: attemptError instanceof Error ? attemptError.message : String(attemptError),
               stack: attemptError instanceof Error ? attemptError.stack : "No stack trace available"
             });
+            
+            if (attemptError instanceof Error && 
+                attemptError.message.includes("GraphQL Error (Code: 400)")) {
+              debugInfo += debugLog(`CREATE PAGE GRAPHQL ERROR ANALYSIS - ATTEMPT ${i+1}`, {
+                path: currentPath,
+                possibleIssue: "Wiki.js may require specific path format or have permission restrictions",
+                recommendation: "Check Wiki.js configuration and API permissions",
+                note: "Japanese language prefix (/ja/) is recommended for Wiki.js paths"
+              });
+            }
           }
         }
         
