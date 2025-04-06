@@ -543,6 +543,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               error: attemptError instanceof Error ? attemptError.message : String(attemptError),
               stack: attemptError instanceof Error ? attemptError.stack : "No stack trace available"
             });
+            
+            if (attemptError instanceof Error && 
+                attemptError.message.includes("GraphQL Error (Code: 400)")) {
+              debugInfo += debugLog(`CREATE PAGE GRAPHQL ERROR ANALYSIS - ATTEMPT ${i+1}`, {
+                path: currentPath,
+                possibleIssue: "Wiki.js may require specific path format or have permission restrictions",
+                recommendation: "Check Wiki.js configuration and API permissions",
+                note: "Japanese language prefix (/ja/) is recommended for Wiki.js paths"
+              });
+            }
           }
         }
         
