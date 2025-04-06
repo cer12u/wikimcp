@@ -11,15 +11,63 @@
 
 ## インストール
 
-```bash
-# GitHubリポジトリから直接インストール
-npm install -g cer12u/wikimcp
+### ローカルでの実行（推奨）
 
-# または、リポジトリをクローンして手動でインストール
+```bash
+# リポジトリをクローン
 git clone https://github.com/cer12u/wikimcp.git
 cd wikimcp
+
+# 依存関係をインストール
 npm install
+
+# ビルド
 npm run build
+```
+
+### Claude Desktopでの設定
+
+`claude_desktop_config.json`に以下を追加（ローカル実行）:
+
+```json
+{
+  "mcpServers": {
+    "wiki": {
+      "command": "node",
+      "args": ["/path/to/wikimcp/dist/index.js"],
+      "env": {
+        "WIKI_API_URL": "https://your-wiki-instance.com",
+        "WIKI_API_TOKEN": "your_api_token_here"
+      }
+    }
+  }
+}
+```
+
+`/path/to/wikimcp`は実際のリポジトリのパスに置き換えてください。
+
+### その他のインストール方法
+
+```bash
+# GitHubリポジトリから直接インストール
+npm install -g github:cer12u/wikimcp
+```
+
+この場合のClaude Desktop設定:
+
+```json
+{
+  "mcpServers": {
+    "wiki": {
+      "command": "npx",
+      "args": ["-y", "github:cer12u/wikimcp"],
+      "env": {
+        "WIKI_API_URL": "https://your-wiki-instance.com",
+        "WIKI_API_TOKEN": "your_api_token_here"
+      }
+    }
+  }
+}
 ```
 
 ## セットアップ
