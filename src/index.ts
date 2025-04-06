@@ -383,35 +383,48 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         throw new Error("Invalid arguments for wiki_create_page");
       }
 
-      const data = await graphqlClient.request(CREATE_PAGE_MUTATION, {
-        path: args.path,
-        title: args.title,
-        content: args.content,
-        editor: args.editor || "markdown",
-        isPublished: args.isPublished !== undefined ? args.isPublished : true,
-        description: "" // Optional but included in the mutation
-      });
+      try {
+        const data = await graphqlClient.request(CREATE_PAGE_MUTATION, {
+          path: args.path,
+          title: args.title,
+          content: args.content,
+          editor: args.editor || "markdown",
+          isPublished: args.isPublished !== undefined ? args.isPublished : true,
+          description: "" // Optional but included in the mutation
+        });
 
-      const typedData = data as { pages: { create: any } };
-      const result = typedData.pages.create;
-      
-      if (!result.responseResult.succeeded) {
+        console.error("Create page response:", JSON.stringify(data, null, 2));
+        
+        const typedData = data as { pages: { create: { responseResult: { succeeded: boolean, message: string }, page: { id: number, title: string, path: string } } } };
+        const result = typedData.pages.create;
+        
+        if (!result.responseResult.succeeded) {
+          return {
+            content: [{ 
+              type: "text", 
+              text: `Failed to create page: ${result.responseResult.message}` 
+            }],
+            isError: true,
+          };
+        }
+        
         return {
           content: [{ 
             type: "text", 
-            text: `Failed to create page: ${result.responseResult.message}` 
+            text: `Page created successfully:\nTitle: ${result.page.title}\nID: ${result.page.id}\nPath: ${result.page.path}` 
+          }],
+          isError: false,
+        };
+      } catch (error) {
+        console.error("Create page error details:", error);
+        return {
+          content: [{ 
+            type: "text", 
+            text: `Error creating page: ${error instanceof Error ? error.message : String(error)}` 
           }],
           isError: true,
         };
       }
-      
-      return {
-        content: [{ 
-          type: "text", 
-          text: `Page created successfully:\nTitle: ${result.page.title}\nID: ${result.page.id}\nPath: ${result.page.path}` 
-        }],
-        isError: false,
-      };
     }
 
     if (name === "wiki_update_page") {
@@ -440,35 +453,48 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         throw new Error("Could not determine page ID");
       }
 
-      const data = await graphqlClient.request(UPDATE_PAGE_MUTATION, {
-        id: pageId,
-        title: args.title,
-        content: args.content,
-        editor: args.editor,
-        isPublished: args.isPublished,
-        description: undefined // Optional
-      });
+      try {
+        const data = await graphqlClient.request(UPDATE_PAGE_MUTATION, {
+          id: pageId,
+          title: args.title,
+          content: args.content,
+          editor: args.editor,
+          isPublished: args.isPublished,
+          description: undefined // Optional
+        });
 
-      const typedData = data as { pages: { update: any } };
-      const result = typedData.pages.update;
-      
-      if (!result.responseResult.succeeded) {
+        console.error("Update page response:", JSON.stringify(data, null, 2));
+        
+        const typedData = data as { pages: { update: { responseResult: { succeeded: boolean, message: string }, page: { id: number, title: string, path: string } } } };
+        const result = typedData.pages.update;
+        
+        if (!result.responseResult.succeeded) {
+          return {
+            content: [{ 
+              type: "text", 
+              text: `Failed to update page: ${result.responseResult.message}` 
+            }],
+            isError: true,
+          };
+        }
+        
         return {
           content: [{ 
             type: "text", 
-            text: `Failed to update page: ${result.responseResult.message}` 
+            text: `Page updated successfully:\nTitle: ${result.page.title}\nID: ${result.page.id}\nPath: ${result.page.path}` 
+          }],
+          isError: false,
+        };
+      } catch (error) {
+        console.error("Update page error details:", error);
+        return {
+          content: [{ 
+            type: "text", 
+            text: `Error updating page: ${error instanceof Error ? error.message : String(error)}` 
           }],
           isError: true,
         };
       }
-      
-      return {
-        content: [{ 
-          type: "text", 
-          text: `Page updated successfully:\nTitle: ${result.page.title}\nID: ${result.page.id}\nPath: ${result.page.path}` 
-        }],
-        isError: false,
-      };
     }
 
     return {
