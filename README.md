@@ -12,7 +12,14 @@
 ## インストール
 
 ```bash
-npm install -g wikimcp
+# GitHubリポジトリから直接インストール
+npm install -g cer12u/wikimcp
+
+# または、リポジトリをクローンして手動でインストール
+git clone https://github.com/cer12u/wikimcp.git
+cd wikimcp
+npm install
+npm run build
 ```
 
 ## セットアップ
